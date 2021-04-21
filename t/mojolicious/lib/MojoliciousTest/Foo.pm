@@ -10,6 +10,8 @@ sub config {
 
 sub fun { shift->render }
 
+sub joy { shift->render }
+
 sub index {
   my $self = shift;
   $self->layout('default');
@@ -80,7 +82,7 @@ sub templateless { shift->render(handler => 'test') }
 sub test {
   my $self = shift;
   $self->res->headers->header('X-Bender' => 'Bite my shiny metal ass!');
-  $self->render(text => $self->url_for(controller => 'bar'));
+  $self->render(text => $self->url_for(foo => 'bar'));
 }
 
 sub url_for_missing {
@@ -99,6 +101,9 @@ __DATA__
 
 @@ foo/fun.html.ep
 <p>Have fun!</p>\
+
+@@ foo/joy.html.ep
+<p class="joy" style="background-color: darkred;" data-foo="0">Joy for all!</p>\
 
 @@ just/some/template.html.epl
 Development template with high precedence.

@@ -1,7 +1,7 @@
 use Mojo::Base -strict;
 
 use Test::More;
-use Mojo::File 'path';
+use Mojo::File qw(curfile path);
 use Mojo::Template;
 
 package MyTemplateExporter;
@@ -122,8 +122,7 @@ lalala <%%= 1 +
  1 %> 12
 34
 EOF
-is $output, "lalala <%= 1 +\n 1 %> 12\n34\n",
-  'expression tag has been replaced';
+is $output, "lalala <%= 1 +\n 1 %> 12\n34\n", 'expression tag has been replaced';
 
 # Replace comment tag
 $mt     = Mojo::Template->new;
@@ -156,8 +155,7 @@ $output = $mt->render(<<'EOF');
 %% my $num = <%= 20 + 3%>;
 The number is <%%= <%= '$' %>num %>.
 EOF
-is $output, "% my \$num = 23;\nThe number is <%= \$num %>.\n",
-  'mixed lines have been replaced';
+is $output, "% my \$num = 23;\nThe number is <%= \$num %>.\n", 'mixed lines have been replaced';
 
 # Helper starting with "end"
 $mt     = Mojo::Template->new(prepend => 'sub endpoint { "works!" }');
@@ -577,6 +575,19 @@ $output = $mt->render(<<'EOF');
 EOF
 is $output, " \n    2\n\n    3\n\n    4\n", 'block loop';
 
+subtest 'End and begin in the same perl line' => sub {
+  my $concat = 'no warnings "redefine"; sub concat { $_[0]->() . $_[1]->() }';
+  my $mt     = Mojo::Template->new(prepend => $concat);
+  my $output = $mt->render(<<'EOF');
+  %= concat begin
+    1
+  % end, begin
+    2
+  % end
+EOF
+  is $output, "  \n    1\n    2\n", 'end, begin';
+};
+
 # Strict
 $output = Mojo::Template->new->render('% $foo = 1;');
 isa_ok $output, 'Mojo::Exception', 'right exception';
@@ -589,13 +600,13 @@ $output = $mt->render(<<'EOF');
 %= __PACKAGE__
 %= foo
 EOF
-is $output, "Mojo::Template::SandBox\nworks!\n", 'right result';
+is $output, "Mojo::Template::Sandbox\nworks!\n", 'right result';
 $output = $mt->render(<<'EOF');
 % BEGIN { MyTemplateExporter->import }
 %= __PACKAGE__
 %= foo
 EOF
-is $output, "Mojo::Template::SandBox\nworks!\n", 'right result';
+is $output, "Mojo::Template::Sandbox\nworks!\n", 'right result';
 
 # Unusable error message (stack trace required)
 $mt     = Mojo::Template->new;
@@ -652,17 +663,17 @@ test
 EOF
 isa_ok $output, 'Mojo::Exception', 'right exception';
 like $output->message, qr/ohoh/, 'right message';
-is $output->lines_before->[0][0], 14,  'right number';
-is $output->lines_before->[0][1], '}', 'right line';
-is $output->lines_before->[1][0], 15,  'right number';
-is $output->lines_before->[1][1], '',  'right line';
-is $output->lines_before->[2][0], 16,  'right number';
+is $output->lines_before->[0][0], 14,                             'right number';
+is $output->lines_before->[0][1], '}',                            'right line';
+is $output->lines_before->[1][0], 15,                             'right number';
+is $output->lines_before->[1][1], '',                             'right line';
+is $output->lines_before->[2][0], 16,                             'right number';
 is $output->lines_before->[2][1], 'package MyTemplateException;', 'right line';
-is $output->lines_before->[3][0], 17,                        'right number';
-is $output->lines_before->[3][1], 'use Mojo::Base -strict;', 'right line';
-is $output->lines_before->[4][0], 18,                        'right number';
-is $output->lines_before->[4][1], '',                        'right line';
-is $output->line->[0], 19, 'right number';
+is $output->lines_before->[3][0], 17,                             'right number';
+is $output->lines_before->[3][1], 'use Mojo::Base -strict;',      'right line';
+is $output->lines_before->[4][0], 18,                             'right number';
+is $output->lines_before->[4][1], '',                             'right line';
+is $output->line->[0], 19,                             'right number';
 is $output->line->[1], "sub exception { die 'ohoh' }", 'right line';
 is $output->lines_after->[0][0], 20,              'right number';
 is $output->lines_after->[0][1], '',              'right line';
@@ -691,7 +702,7 @@ is $output->lines_before->[2][0], 3,               'right number';
 is $output->lines_before->[2][1], '456',           'right line';
 is $output->lines_before->[3][0], 4,               'right number';
 is $output->lines_before->[3][1], ' %# This dies', 'right line';
-is $output->line->[0], 5, 'right number';
+is $output->line->[0], 5,                'right number';
 is $output->line->[1], "% die 'oops!';", 'right line';
 is $output->lines_after->[0][0], 6,          'right number';
 is $output->lines_after->[0][1], '%= 1 + 1', 'right line';
@@ -731,13 +742,13 @@ like $output->message, qr/oops!/, 'right message';
 is $output->lines_before->[0][0], 1,          'right number';
 is $output->lines_before->[0][1], 'test\\\\', 'right line';
 ok $output->lines_before->[0][2], 'contains code';
-is $output->lines_before->[1][0], 2,          'right number';
-is $output->lines_before->[1][1], '123',      'right line';
+is $output->lines_before->[1][0], 2,     'right number';
+is $output->lines_before->[1][1], '123', 'right line';
 ok $output->lines_before->[1][2], 'contains code';
-is $output->lines_before->[2][0], 3,          'right number';
-is $output->lines_before->[2][1], '%',        'right line';
-is $output->lines_before->[2][2], ' ',        'right code';
-is $output->line->[0], 4, 'right number';
+is $output->lines_before->[2][0], 3,   'right number';
+is $output->lines_before->[2][1], '%', 'right line';
+is $output->lines_before->[2][2], ' ', 'right code';
+is $output->line->[0], 4,                'right number';
 is $output->line->[1], "% die 'oops!';", 'right line';
 is $output->lines_after->[0][0], 5,     'right number';
 is $output->lines_after->[0][1], '%',   'right line';
@@ -764,8 +775,7 @@ EOT
 -$]
 $-= $output
 EOF
-like $output, qr/test\n\nBareword "bar".+in use at template line 1\./,
-  'exception in nested template';
+like $output, qr/test\n\nBareword "bar".+in use at template line 1\./, 'exception in nested template';
 
 # Control structures
 $mt     = Mojo::Template->new;
@@ -809,15 +819,12 @@ $output = $mt->render(<<'EOF', 'test', {foo => 'bar'});
 </html>
 EOF
 is $output, "<html>\ntest bar\n</html>\n", 'arguments';
-is $mt->process('tset', {foo => 'baz'}), "<html>\ntset baz\n</html>\n",
-  'arguments again';
-is $mt->process('tset', {foo => 'yada'}), "<html>\ntset yada\n</html>\n",
-  'arguments again';
+is $mt->process('tset', {foo => 'baz'}),  "<html>\ntset baz\n</html>\n",  'arguments again';
+is $mt->process('tset', {foo => 'yada'}), "<html>\ntset yada\n</html>\n", 'arguments again';
 
 # Variables
 $mt     = Mojo::Template->new;
-$output = $mt->vars(1)
-  ->render('<%= $foo %><%= $bar %>', {foo => 'works', bar => '!'});
+$output = $mt->vars(1)->render('<%= $foo %><%= $bar %>', {foo => 'works', bar => '!'});
 is $output, "works!\n", 'variables';
 
 # No variables
@@ -1125,13 +1132,13 @@ EOF
 
 # File
 $mt = Mojo::Template->new;
-my $file = path(__FILE__)->sibling('templates', 'test.mt');
+my $file = curfile->sibling('templates', 'test.mt');
 $output = $mt->render_file($file, 3);
 like $output, qr/23\nHello World!/, 'file';
 
 # Exception in file
 $mt     = Mojo::Template->new;
-$file   = path(__FILE__)->sibling('templates', 'exception.mt');
+$file   = curfile->sibling('templates', 'exception.mt');
 $output = $mt->render_file($file);
 isa_ok $output, 'Mojo::Exception', 'right exception';
 like $output->message, qr/exception\.mt line 2/, 'message contains filename';
@@ -1147,8 +1154,7 @@ like "$output", qr/exception\.mt line 2/, 'right result';
 $mt     = Mojo::Template->new;
 $output = $mt->name('"foo.mt" from DATA section')->render_file($file);
 isa_ok $output, 'Mojo::Exception', 'right exception';
-like $output->message, qr/foo\.mt from DATA section line 2/,
-  'message contains filename';
+like $output->message, qr/foo\.mt from DATA section line 2/, 'message contains filename';
 is $output->lines_before->[0][0], 1,      'right number';
 is $output->lines_before->[0][1], 'test', 'right line';
 is $output->line->[0], 2,        'right number';
@@ -1159,7 +1165,7 @@ like "$output", qr/foo\.mt from DATA section line 2/, 'right result';
 
 # Exception with UTF-8 context
 $mt     = Mojo::Template->new;
-$file   = path(__FILE__)->sibling('templates', 'utf8_exception.mt');
+$file   = curfile->sibling('templates', 'utf8_exception.mt');
 $output = $mt->render_file($file);
 isa_ok $output, 'Mojo::Exception', 'right exception';
 is $output->lines_before->[0][1], '☃', 'right line';
@@ -1171,14 +1177,14 @@ $mt     = Mojo::Template->new;
 $output = $mt->render('<% die "Test at template line 99\n"; %>');
 isa_ok $output, 'Mojo::Exception', 'right exception';
 is $output->message, "Test at template line 99\n", 'right message';
-is $output->lines_before->[0], undef, 'no lines before';
-is $output->line->[0],         1,     'right number';
-is $output->line->[1], '<% die "Test at template line 99\n"; %>', 'right line';
-is $output->lines_after->[0], undef, 'no lines after';
+is $output->lines_before->[0], undef,                                     'no lines before';
+is $output->line->[0],         1,                                         'right number';
+is $output->line->[1],         '<% die "Test at template line 99\n"; %>', 'right line';
+is $output->lines_after->[0],  undef,                                     'no lines after';
 
 # Different encodings
 $mt   = Mojo::Template->new(encoding => 'shift_jis');
-$file = path(__FILE__)->sibling('templates', 'utf8_exception.mt');
+$file = curfile->sibling('templates', 'utf8_exception.mt');
 ok !eval { $mt->render_file($file) }, 'file not rendered';
 like $@, qr/invalid encoding/, 'right error';
 

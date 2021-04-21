@@ -3,7 +3,7 @@ use Mojo::Base -strict;
 BEGIN { $ENV{MOJO_REACTOR} = 'Mojo::Reactor::Poll' }
 
 use Test::More;
-use Mojo::ByteStream 'b';
+use Mojo::ByteStream qw(b);
 use Mojo::IOLoop;
 use Mojo::Promise;
 use Mojo::Transaction::WebSocket;
@@ -13,8 +13,7 @@ use Mojolicious::Lite;
 # Max WebSocket size
 {
   local $ENV{MOJO_MAX_WEBSOCKET_SIZE} = 1024;
-  is(Mojo::Transaction::WebSocket->new->max_websocket_size, 1024,
-    'right value');
+  is(Mojo::Transaction::WebSocket->new->max_websocket_size, 1024, 'right value');
 }
 
 # Silence
@@ -66,7 +65,7 @@ websocket '/early_finish' => sub {
 websocket '/denied' => sub {
   my $c = shift;
   $c->tx->handshake->on(finish => sub { $c->stash->{handshake}++ });
-  $c->on(finish => sub                { shift->stash->{finished}++ });
+  $c->on(finish => sub { shift->stash->{finished}++ });
   $c->render(text => 'denied', status => 403);
 };
 
@@ -109,28 +108,26 @@ websocket '/trim' => sub {
 
 websocket '/dead' => sub { die 'i see dead processes' };
 
-websocket '/foo' =>
-  sub { shift->rendered->res->code('403')->message("i'm a teapot") };
+websocket '/foo' => sub { shift->rendered->res->code('403')->message("i'm a teapot") };
 
 websocket '/close' => sub {
   shift->on(message => sub { Mojo::IOLoop->remove(shift->tx->connection) });
 };
 
 websocket '/timeout' => sub {
-  shift->inactivity_timeout(0.25)
-    ->on(finish => sub { shift->stash->{finished}++ });
+  shift->inactivity_timeout(0.25)->on(finish => sub { shift->stash->{finished}++ });
 };
 
 # URL for WebSocket
 my $ua  = app->ua;
 my $res = $ua->get('/link')->result;
-is $res->code, 200, 'right status';
+is $res->code,   200,                        'right status';
 like $res->body, qr!ws://127\.0\.0\.1:\d+/!, 'right content';
 
 # Plain HTTP request
 $res = $ua->get('/early_start')->res;
-is $res->code, 404, 'right status';
-like $res->body, qr/Page not found/, 'right content';
+is $res->code,   404,                'right status';
+like $res->body, qr/Page Not Found/, 'right content';
 
 # Plain WebSocket
 my ($stash, $result);
@@ -162,7 +159,7 @@ $ua->websocket(
 Mojo::IOLoop->start;
 ok !$ws, 'not a WebSocket';
 is $code, 200, 'right status';
-ok $body =~ /^(\d+)failed!$/ && $1 == 15, 'right content';
+ok $body =~ /^(\d+)failed!$/ && $1 == 30, 'right content';
 
 # Server directly sends a message
 $result = '';
@@ -189,9 +186,9 @@ $ua->websocket(
 );
 Mojo::IOLoop->start;
 ok $established, 'connection established';
-is $status,      1000, 'right status';
+is $status,      1000,               'right status';
 is $msg,         'I ♥ Mojolicious!', 'right message';
-is $result,      'test0test2test1', 'right result';
+is $result,      'test0test2test1',  'right result';
 
 # WebSocket connection gets closed very fast
 $status = undef;
@@ -241,10 +238,9 @@ is $code,   101,          'right status';
 is $result, 'test0test1', 'right result';
 
 # Concurrent subrequests
-my $delay = Mojo::IOLoop->delay;
 ($code, $result) = ();
 my ($code2, $result2);
-my $end = $delay->begin;
+my $promise = Mojo::Promise->new;
 $ua->websocket(
   '/subreq' => sub {
     my ($ua, $tx) = @_;
@@ -256,19 +252,19 @@ $ua->websocket(
         $tx->finish if $msg eq 'test1';
       }
     );
-    $tx->on(finish => sub { $end->() });
+    $tx->on(finish => sub { $promise->resolve });
   }
 );
-my $end2 = $delay->begin;
+my $promise2 = Mojo::Promise->new;
 $ua->websocket(
   '/subreq' => sub {
     my ($ua, $tx) = @_;
     $code2 = $tx->res->code;
     $tx->on(message => sub { $result2 .= pop });
-    $tx->on(finish  => sub { $end2->() });
+    $tx->on(finish  => sub { $promise2->resolve });
   }
 );
-$delay->wait;
+Mojo::Promise->all($promise, $promise2)->wait;
 is $code,    101,          'right status';
 is $result,  'test0test1', 'right result';
 is $code2,   101,          'right status';
@@ -291,8 +287,7 @@ $ua->websocket(
     $tx->send(
       'hi!' => sub {
         shift->send('there!');
-        $drain
-          += @{Mojo::IOLoop->stream($tx->connection)->subscribers('drain')};
+        $drain += @{Mojo::IOLoop->stream($tx->connection)->subscribers('drain')};
       }
     );
   }
@@ -346,12 +341,11 @@ $ua->websocket_p('/trim')->then(sub {
 })->wait;
 is $result, 'also works!', 'right result';
 $result = undef;
-$ua->websocket_p('/foo')->then(sub { $result = 'test failed' })
-  ->catch(sub                      { $result = shift })->wait;
+$ua->websocket_p('/foo')->then(sub { $result = 'test failed' })->catch(sub { $result = shift })->wait;
 is $result, 'WebSocket handshake failed', 'right result';
 $result = undef;
-$ua->websocket_p($ua->server->url->to_abs->scheme('wsss'))
-  ->then(sub { $result = 'test failed' })->catch(sub { $result = shift })->wait;
+$ua->websocket_p($ua->server->url->to_abs->scheme('wsss'))->then(sub { $result = 'test failed' })
+  ->catch(sub { $result = shift })->wait;
 is $result, 'Unsupported protocol: wsss', 'right result';
 
 # Dies
@@ -370,8 +364,8 @@ $ua->websocket(
 Mojo::IOLoop->start;
 ok $finished, 'transaction is finished';
 ok !$ws, 'not a websocket';
-is $code, 500, 'right status';
-is $msg, 'Internal Server Error', 'right message';
+is $code, 500,                     'right status';
+is $msg,  'Internal Server Error', 'right message';
 
 # Forbidden
 ($ws, $code, $msg) = ();
@@ -394,7 +388,7 @@ $status = undef;
 $ua->websocket(
   '/close' => sub {
     my ($ua, $tx) = @_;
-    $tx->on(finish => sub { $status = pop; Mojo::IOLoop->stop });
+    $tx->on(finish => sub { (undef, $status, undef) = @_; Mojo::IOLoop->stop });
     $tx->send('test1');
   }
 );

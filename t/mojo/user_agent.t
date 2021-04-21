@@ -8,9 +8,11 @@ BEGIN {
 use Test::More;
 use Mojo::IOLoop;
 use Mojo::Message::Request;
+use Mojo::Promise;
+use Mojo::Server::Daemon;
 use Mojo::UserAgent;
 use Mojo::UserAgent::Server;
-use Mojo::Util 'gzip';
+use Mojo::Util qw(gzip);
 use Mojolicious::Lite;
 
 # Silence
@@ -81,7 +83,7 @@ get '/redirect_close' => sub {
   is(Mojo::UserAgent->new->connect_timeout, 10, 'right value');
   local $ENV{MOJO_CONNECT_TIMEOUT} = 25;
   is(Mojo::UserAgent->new->connect_timeout,    25, 'right value');
-  is(Mojo::UserAgent->new->inactivity_timeout, 20, 'right value');
+  is(Mojo::UserAgent->new->inactivity_timeout, 40, 'right value');
   local $ENV{MOJO_INACTIVITY_TIMEOUT} = 25;
   is(Mojo::UserAgent->new->inactivity_timeout, 25, 'right value');
   $ENV{MOJO_INACTIVITY_TIMEOUT} = 0;
@@ -99,8 +101,7 @@ is(Mojo::UserAgent->new->server->app, app, 'applications are equal');
 Mojo::UserAgent::Server->app(app);
 is(Mojo::UserAgent::Server->app, app, 'applications are equal');
 my $dummy = Mojolicious::Lite->new;
-isnt(Mojo::UserAgent->new->server->app($dummy)->app,
-  app, 'applications are not equal');
+isnt(Mojo::UserAgent->new->server->app($dummy)->app, app, 'applications are not equal');
 is(Mojo::UserAgent::Server->app, app, 'applications are still equal');
 Mojo::UserAgent::Server->app($dummy);
 isnt(Mojo::UserAgent::Server->app, app, 'applications are not equal');
@@ -111,7 +112,7 @@ is(Mojo::UserAgent::Server->app, app, 'applications are equal again');
 # Clean up non-blocking requests
 my $ua  = Mojo::UserAgent->new;
 my $get = my $post = '';
-$ua->get('/' => sub  { $get  = pop->error });
+$ua->get('/' => sub { $get = pop->error });
 $ua->post('/' => sub { $post = pop->error });
 undef $ua;
 is $get->{message},  'Premature connection close', 'right error';
@@ -137,7 +138,7 @@ $ua->get(
 is $ua->get('/')->res->code, 200, 'right status';
 Mojo::IOLoop->start;
 ok $success, 'successful';
-is $code,    200, 'right status';
+is $code,    200,      'right status';
 is $body,    'works!', 'right content';
 
 # Promises
@@ -171,13 +172,24 @@ $ua->post_p('/method')->then(sub { $result = shift->res->body })->wait;
 is $result, 'POST', 'right result';
 $ua->put_p('/method')->then(sub { $result = shift->res->body })->wait;
 is $result, 'PUT', 'right result';
-$ua->start_p($ua->build_tx(TEST => '/method'))
-  ->then(sub { $result = shift->res->body })->wait;
+$ua->start_p($ua->build_tx(TEST => '/method'))->then(sub { $result = shift->res->body })->wait;
 is $result, 'TEST', 'right result';
+
+# No timeout
+$ua = Mojo::UserAgent->new(inactivity_timeout => 0);
+my $tx = $ua->get('/');
+ok $tx->keep_alive, 'keep connection alive';
+is $tx->res->code, 200,      'right status';
+is $tx->res->body, 'works!', 'right content';
+$tx = $ua->get('/');
+ok $tx->kept_alive, 'kept connection alive';
+ok $tx->keep_alive, 'keep connection alive';
+is $tx->res->code, 200,      'right status';
+is $tx->res->body, 'works!', 'right content';
 
 # SOCKS proxy request without SOCKS support
 $ua = Mojo::UserAgent->new;
-my $tx = $ua->build_tx(GET => '/');
+$tx = $ua->build_tx(GET => '/');
 $tx->req->proxy($ua->server->url->scheme('socks'));
 $tx = $ua->start($tx);
 like $tx->error->{message}, qr/IO::Socket::Socks/, 'right error';
@@ -191,8 +203,7 @@ ok !Mojo::IOLoop::TLS->can_tls, 'no TLS support';
 
 # Promises (rejected)
 my $error;
-$ua->get_p($ua->server->url->scheme('https'))->catch(sub { $error = shift })
-  ->wait;
+$ua->get_p($ua->server->url->scheme('https'))->catch(sub { $error = shift })->wait;
 like $error, qr/IO::Socket::SSL/, 'right error';
 
 # No non-blocking name resolution
@@ -267,8 +278,7 @@ is $tx->res->body, 'One!', 'right content';
 # Error in callback
 Mojo::IOLoop->singleton->reactor->unsubscribe('error');
 my $err;
-Mojo::IOLoop->singleton->reactor->once(
-  error => sub { $err .= pop; Mojo::IOLoop->stop });
+Mojo::IOLoop->singleton->reactor->once(error => sub { $err .= pop; Mojo::IOLoop->stop });
 app->ua->get('/' => sub { die 'error event works' });
 Mojo::IOLoop->start;
 like $err, qr/error event works/, 'right error';
@@ -287,7 +297,7 @@ $ua->once(
   start => sub {
     my ($ua, $tx) = @_;
     $tx->req->on(finish => sub { $finished_req++ });
-    $tx->on(finish => sub      { $finished_tx++ });
+    $tx->on(finish => sub { $finished_tx++ });
     $tx->res->on(finish => sub { $finished_res++ });
   }
 );
@@ -299,7 +309,7 @@ is $finished_res, 1, 'finish event has been emitted once';
 ok $tx->req->is_finished, 'request is finished';
 ok $tx->is_finished, 'transaction is finished';
 ok $tx->res->is_finished, 'response is finished';
-is $tx->res->code,        200, 'right status';
+is $tx->res->code,        200,      'right status';
 is $tx->res->body,        'works!', 'right content';
 
 # Missing Content-Length header
@@ -310,7 +320,7 @@ $ua->once(
   start => sub {
     my ($ua, $tx) = @_;
     $tx->req->on(finish => sub { $finished_req++ });
-    $tx->on(finish => sub      { $finished_tx++ });
+    $tx->on(finish => sub { $finished_tx++ });
     $tx->res->on(finish => sub { $finished_res++ });
   }
 );
@@ -366,7 +376,7 @@ $ua->post(
 );
 Mojo::IOLoop->start;
 ok $success, 'successful';
-is $code,    200, 'right status';
+is $code,    200,           'right status';
 is $body,    'hello=world', 'right content';
 
 # Non-blocking JSON
@@ -382,7 +392,7 @@ $ua->post(
 );
 Mojo::IOLoop->start;
 ok $success, 'successful';
-is $code,    200, 'right status';
+is $code,    200,                 'right status';
 is $body,    '{"hello":"world"}', 'right content';
 
 # Built-in web server times out
@@ -392,8 +402,8 @@ my $msg = app->log->on(message => sub { $log .= pop });
 $tx = $ua->get('/timeout?timeout=0.25');
 app->log->unsubscribe(message => $msg);
 is $tx->error->{message}, 'Premature connection close', 'right error';
-is $timeout, 1, 'finish event has been emitted';
-like $log, qr/Inactivity timeout/, 'right log message';
+is $timeout, 1,                      'finish event has been emitted';
+like $log,   qr/Inactivity timeout/, 'right log message';
 eval { $tx->result };
 like $@, qr/Premature connection close/, 'right error';
 
@@ -445,7 +455,7 @@ $ua->once(
 );
 $tx = $ua->get('/echo' => 'Hello World!');
 is $tx->error->{message}, 'Maximum message size exceeded', 'right error';
-is $tx->error->{code}, undef, 'no status';
+is $tx->error->{code},    undef,                           'no status';
 ok $tx->res->is_limit_exceeded, 'limit is exceeded';
 
 # 404 response
@@ -485,37 +495,62 @@ $tx->res->content->auto_decompress(0);
 $tx = $ua->start($tx);
 ok !$tx->error, 'no error';
 is $tx->res->code, 200, 'right status';
-is $tx->res->headers->content_encoding, 'gzip',
-  'right "Content-Encoding" value';
+is $tx->res->headers->content_encoding, 'gzip', 'right "Content-Encoding" value';
 isnt $tx->res->body, 'Hello GZip!', 'different content';
 
-# Fork-safety
-$tx = $ua->get('/');
+# Keep-alive timeout in between requests
+my $daemon = Mojo::Server::Daemon->new(
+  app                => app,
+  ioloop             => $ua->ioloop,
+  keep_alive_timeout => 0.5,
+  listen             => ['http://127.0.0.1'],
+  silent             => 1
+);
+my $port = $daemon->start->ports->[0];
+$tx = $ua->get("http://127.0.0.1:$port");
 ok $tx->keep_alive, 'keep connection alive';
+is $tx->res->code, 200,      'right status';
 is $tx->res->body, 'works!', 'right content';
-my $last = $tx->connection;
-my $port = $ua->server->url->port;
-$tx = $ua->get('/');
+Mojo::Promise->new->ioloop($ua->ioloop)->timer(1)->wait;
+$tx = $ua->get("http://127.0.0.1:$port");
+ok !$tx->kept_alive, 'kept connection not alive';
+ok $tx->keep_alive, 'keep connection alive';
+is $tx->res->code, 200,      'right status';
 is $tx->res->body, 'works!', 'right content';
-is $tx->connection, $last, 'same connection';
-is $ua->server->url->port, $port, 'same port';
-{
-  local $$ = -23;
-  $tx = $ua->get('/');
-  ok !$tx->kept_alive, 'kept connection not alive';
+
+subtest 'Fork-safety' => sub {
+  my $tx = $ua->get('/');
   ok $tx->keep_alive, 'keep connection alive';
   is $tx->res->body, 'works!', 'right content';
-  isnt $tx->connection, $last, 'new connection';
-  isnt $ua->server->url->port, $port, 'new port';
-  $port = $ua->server->url->port;
-  $last = $tx->connection;
-  $tx   = $ua->get('/');
-  ok $tx->kept_alive, 'kept connection alive';
-  ok $tx->keep_alive, 'keep connection alive';
+  my $last = $tx->connection;
+  my $port = $ua->server->url->port;
+  $tx = $ua->get('/');
   is $tx->res->body, 'works!', 'right content';
   is $tx->connection, $last, 'same connection';
   is $ua->server->url->port, $port, 'same port';
-}
+  {
+    local $$ = -23;
+    my $tx = $ua->get('/');
+    ok !$tx->kept_alive, 'kept connection not alive';
+    ok $tx->keep_alive, 'keep connection alive';
+    is $tx->res->body, 'works!', 'right content';
+    isnt $tx->connection, $last, 'new connection';
+    isnt $ua->server->url->port, $port, 'new port';
+    my $port2 = $ua->server->url->port;
+    my $last2 = $tx->connection;
+    {
+      local $$ = -24;
+      my $tx = $ua->get('/');
+      ok !$tx->kept_alive, 'kept connection not alive';
+      ok $tx->keep_alive, 'keep connection alive';
+      is $tx->res->body, 'works!', 'right content';
+      isnt $tx->connection, $last,  'new connection';
+      isnt $tx->connection, $last2, 'new connection';
+      isnt $ua->server->url->port, $port,  'new port';
+      isnt $ua->server->url->port, $port2, 'new port';
+    }
+  }
+};
 
 # Introspect
 my $req = my $res = '';
@@ -555,10 +590,8 @@ $tx = $ua->get('/', 'whatever');
 ok !$tx->error, 'no error';
 is $tx->res->code, 200,      'right status';
 is $tx->res->body, 'works!', 'right content';
-is scalar @{Mojo::IOLoop->stream($tx->connection)->subscribers('write')}, 0,
-  'unsubscribed successfully';
-is scalar @{Mojo::IOLoop->stream($tx->connection)->subscribers('read')}, 1,
-  'unsubscribed successfully';
+is scalar @{Mojo::IOLoop->stream($tx->connection)->subscribers('write')}, 0, 'unsubscribed successfully';
+is scalar @{Mojo::IOLoop->stream($tx->connection)->subscribers('read')},  1, 'unsubscribed successfully';
 like $req, qr!^GET / .*whatever$!s,      'right request';
 like $res, qr|^HTTP/.*200 OK.*works!$|s, 'right response';
 is_deeply \@num, [0, 0, length $res, length $req], 'right structure';
@@ -611,8 +644,7 @@ $tx = $ua->post('/echo' => 'Hello Mojo!');
 ok !$tx->error, 'no error';
 is $tx->res->code, 200,           'right status';
 is $tx->res->body, 'Hello Mojo!', 'right content';
-is_deeply $progress, {start_line => 1, headers => 1, body => 1, finish => 1},
-  'right structure';
+is_deeply $progress, {start_line => 1, headers => 1, body => 1, finish => 1}, 'right structure';
 
 # Mixed blocking and non-blocking requests, with custom URL
 $ua = Mojo::UserAgent->new(ioloop => Mojo::IOLoop->singleton);
@@ -702,16 +734,10 @@ is $tx->res->body, 'Hi!', 'right content';
 # Connection limit
 $ua     = Mojo::UserAgent->new(max_connections => 2);
 $result = undef;
-Mojo::IOLoop->delay(
-  sub {
-    my $delay = shift;
-    $ua->get('/' => $delay->begin) for 1 .. 5;
-  },
-  sub {
-    my $delay = shift;
-    $result = [grep {defined} map { Mojo::IOLoop->stream($_->connection) } @_];
-  }
-)->wait;
+my @txs = map { $ua->get_p('/') } 1 .. 5;
+Mojo::Promise->all(@txs)->then(sub {
+  $result = [grep {defined} map { Mojo::IOLoop->stream($_->connection) } map { $_->[0] } @_];
+})->wait;
 is scalar @$result, 2, 'two active connections';
 
 done_testing();

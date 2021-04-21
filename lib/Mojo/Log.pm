@@ -1,13 +1,15 @@
 package Mojo::Log;
 use Mojo::Base 'Mojo::EventEmitter';
 
-use Carp 'croak';
-use Fcntl ':flock';
+use Carp qw(croak);
+use Fcntl qw(:flock);
 use Mojo::File;
-use Mojo::Util 'encode';
-use Time::HiRes 'time';
+use Mojo::Util qw(encode);
+use Term::ANSIColor qw(colored);
+use Time::HiRes qw(time);
 
-has format => sub { shift->short ? \&_short : \&_default };
+has color  => sub { $ENV{MOJO_LOG_COLOR} };
+has format => sub { $_[0]->short ? \&_short : $_[0]->color ? \&_color : \&_default };
 has handle => sub {
 
   # STDERR
@@ -28,6 +30,9 @@ my %LEVEL = (debug => 1, info => 2, warn => 3, error => 4, fatal => 5);
 # Systemd magic numbers
 my %MAGIC = (debug => 7, info => 6, warn => 4, error => 3, fatal => 2);
 
+# Colors
+my %COLORS = (warn => ['yellow'], error => ['red'], fatal => ['white on_red']);
+
 sub append {
   my ($self, $msg) = @_;
 
@@ -38,6 +43,12 @@ sub append {
 }
 
 sub debug { 1 >= $LEVEL{$_[0]->level} ? _log(@_, 'debug') : $_[0] }
+
+sub context {
+  my ($self, @context) = @_;
+  return $self->new(parent => $self, context => \@context, level => $self->level);
+}
+
 sub error { 4 >= $LEVEL{$_[0]->level} ? _log(@_, 'error') : $_[0] }
 sub fatal { 5 >= $LEVEL{$_[0]->level} ? _log(@_, 'fatal') : $_[0] }
 sub info  { 2 >= $LEVEL{$_[0]->level} ? _log(@_, 'info')  : $_[0] }
@@ -52,15 +63,25 @@ sub new {
 
 sub warn { 3 >= $LEVEL{$_[0]->level} ? _log(@_, 'warn') : $_[0] }
 
+sub _color {
+  my $msg = _default(shift, my $level = shift, @_);
+  return $COLORS{$level} ? colored($COLORS{$level}, $msg) : $msg;
+}
+
 sub _default {
   my ($time, $level) = (shift, shift);
   my ($s, $m, $h, $day, $month, $year) = localtime $time;
-  $time = sprintf '%04d-%02d-%02d %02d:%02d:%08.5f', $year + 1900, $month + 1,
-    $day, $h, $m, "$s." . ((split /\./, $time)[1] // 0);
-  return "[$time] [$$] [$level] " . join "\n", @_, '';
+  $time = sprintf '%04d-%02d-%02d %02d:%02d:%08.5f', $year + 1900, $month + 1, $day, $h, $m,
+    "$s." . ((split /\./, $time)[1] // 0);
+  return "[$time] [$$] [$level] " . join(' ', @_) . "\n";
 }
 
-sub _log { shift->emit('message', pop, ref $_[0] eq 'CODE' ? $_[0]() : @_) }
+sub _log {
+  my ($self, $level) = (shift, pop);
+  my @msgs = ref $_[0] eq 'CODE' ? $_[0]() : @_;
+  unshift @msgs, @{$self->{context}} if $self->{context};
+  ($self->{parent} || $self)->emit('message', $level, @msgs);
+}
 
 sub _message {
   my ($self, $level) = (shift, shift);
@@ -76,7 +97,7 @@ sub _message {
 sub _short {
   my ($time, $level) = (shift, shift);
   my ($magic, $short) = ("<$MAGIC{$level}>", substr($level, 0, 1));
-  return "${magic}[$$] [$short] " . join("\n$magic", @_) . "\n";
+  return "${magic}[$$] [$short] " . join(' ', @_) . "\n";
 }
 
 1;
@@ -110,26 +131,28 @@ L<Mojo::Log> is a simple logger for L<Mojo> projects.
 
 =head1 EVENTS
 
-L<Mojo::Log> inherits all events from L<Mojo::EventEmitter> and can emit the
-following new ones.
+L<Mojo::Log> inherits all events from L<Mojo::EventEmitter> and can emit the following new ones.
 
 =head2 message
 
-  $log->on(message => sub {
-    my ($log, $level, @lines) = @_;
-    ...
-  });
+  $log->on(message => sub ($log, $level, @lines) {...});
 
 Emitted when a new message gets logged.
 
-  $log->on(message => sub {
-    my ($log, $level, @lines) = @_;
-    say "$level: ", @lines;
-  });
+  $log->on(message => sub ($log, $level, @lines) { say "$level: ", @lines });
 
 =head1 ATTRIBUTES
 
 L<Mojo::Log> implements the following attributes.
+
+=head2 color
+
+  my $bool = $log->color;
+  $log     = $log->color($bool);
+
+Colorize log messages with the levels C<warn>, C<error> and C<fatal> using L<Term::ANSIColor>, defaults to the value of
+the C<MOJO_LOG_COLOR> environment variables. Note that this attribute is B<EXPERIMENTAL> and might change without
+warning!
 
 =head2 format
 
@@ -138,18 +161,14 @@ L<Mojo::Log> implements the following attributes.
 
 A callback for formatting log messages.
 
-  $log->format(sub {
-    my ($time, $level, @lines) = @_;
-    return "[2018-11-08 14:20:13.77168] [28320] [info] I ♥ Mojolicious\n";
-  });
+  $log->format(sub ($time, $level, @lines) { "[2018-11-08 14:20:13.77168] [28320] [info] I ♥ Mojolicious\n" });
 
 =head2 handle
 
   my $handle = $log->handle;
   $log       = $log->handle(IO::Handle->new);
 
-Log filehandle used by default L</"message"> event, defaults to opening
-L</"path"> or C<STDERR>.
+Log filehandle used by default L</"message"> event, defaults to opening L</"path"> or C<STDERR>.
 
 =head2 history
 
@@ -163,8 +182,8 @@ The last few logged messages.
   my $level = $log->level;
   $log      = $log->level('debug');
 
-Active log level, defaults to C<debug>. Available log levels are C<debug>,
-C<info>, C<warn>, C<error> and C<fatal>, in that order.
+Active log level, defaults to C<debug>. Available log levels are C<debug>, C<info>, C<warn>, C<error> and C<fatal>, in
+that order.
 
 =head2 max_history_size
 
@@ -185,19 +204,30 @@ Log file path used by L</"handle">.
   my $bool = $log->short;
   $log     = $log->short($bool);
 
-Generate short log messages without a timestamp, suitable for systemd, defaults
-to the value of the C<MOJO_LOG_SHORT> environment variables.
+Generate short log messages without a timestamp but with journald log level prefix, suitable for systemd environments,
+defaults to the value of the C<MOJO_LOG_SHORT> environment variables.
 
 =head1 METHODS
 
-L<Mojo::Log> inherits all methods from L<Mojo::EventEmitter> and implements the
-following new ones.
+L<Mojo::Log> inherits all methods from L<Mojo::EventEmitter> and implements the following new ones.
 
 =head2 append
 
   $log->append("[2018-11-08 14:20:13.77168] [28320] [info] I ♥ Mojolicious\n");
 
 Append message to L</"handle">.
+
+=head2 context
+
+  my $new = $log->context('[extra]', '[information]');
+
+Construct a new child L<Mojo::Log> object that will include context information with every log message.
+
+  # Log with context
+  my $log = Mojo::Log->new;
+  my $context = $log->context('[17a60115]');
+  $context->debug('This is a log message with context information');
+  $context->info('And another');
 
 =head2 debug
 
@@ -251,8 +281,7 @@ Check active log L</"level">.
   my $log = Mojo::Log->new(level => 'warn');
   my $log = Mojo::Log->new({level => 'warn'});
 
-Construct a new L<Mojo::Log> object and subscribe to L</"message"> event with
-default logger.
+Construct a new L<Mojo::Log> object and subscribe to L</"message"> event with default logger.
 
 =head2 warn
 

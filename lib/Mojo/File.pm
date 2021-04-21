@@ -1,26 +1,21 @@
 package Mojo::File;
 use Mojo::Base -strict;
-use overload
-  '@{}'    => sub { shift->to_array },
-  bool     => sub {1},
-  '""'     => sub { ${$_[0]} },
-  fallback => 1;
+use overload '@{}' => sub { shift->to_array }, bool => sub {1}, '""' => sub { ${$_[0]} }, fallback => 1;
 
-use Carp 'croak';
-use Cwd 'getcwd';
-use Exporter 'import';
+use Carp qw(croak);
+use Cwd qw(getcwd);
+use Exporter qw(import);
 use File::Basename ();
 use File::Copy qw(copy move);
-use File::Find 'find';
+use File::Find qw(find);
 use File::Path ();
-use File::Spec::Functions
-  qw(abs2rel canonpath catfile file_name_is_absolute rel2abs splitdir);
+use File::Spec::Functions qw(abs2rel canonpath catfile file_name_is_absolute rel2abs splitdir);
 use File::stat ();
 use File::Temp ();
 use IO::File   ();
 use Mojo::Collection;
 
-our @EXPORT_OK = ('path', 'tempdir', 'tempfile');
+our @EXPORT_OK = ('curfile', 'path', 'tempdir', 'tempfile');
 
 sub basename { File::Basename::basename ${shift()}, @_ }
 
@@ -38,7 +33,11 @@ sub copy_to {
   return $self->new(-d $to ? ($to, File::Basename::basename $self) : $to);
 }
 
+sub curfile { __PACKAGE__->new(Cwd::realpath((caller)[1])) }
+
 sub dirname { $_[0]->new(scalar File::Basename::dirname ${$_[0]}) }
+
+sub extname { shift->basename =~ /.+\.([^.]+)$/ ? $1 : '' }
 
 sub is_abs { file_name_is_absolute ${shift()} }
 
@@ -49,7 +48,7 @@ sub list {
   opendir(my $dir, $$self) or croak qq{Can't open directory "$$self": $!};
   my @files = grep { $_ ne '.' && $_ ne '..' } readdir $dir;
   @files = grep { !/^\./ } @files unless $options->{hidden};
-  @files = map { catfile $$self, $_ } @files;
+  @files = map  { catfile $$self, $_ } @files;
   @files = grep { !-d } @files unless $options->{dir};
 
   return Mojo::Collection->new(map { $self->new($_) } sort @files);
@@ -141,8 +140,7 @@ sub slurp {
 sub spurt {
   my ($self, $content) = (shift, join '', @_);
   CORE::open my $file, '>', $$self or croak qq{Can't open file "$$self": $!};
-  ($file->syswrite($content) // -1) == length $content
-    or croak qq{Can't write to file "$$self": $!};
+  ($file->syswrite($content) // -1) == length $content or croak qq{Can't write to file "$$self": $!};
   return $self;
 }
 
@@ -188,17 +186,18 @@ Mojo::File - File system paths
   say $path->slurp;
   say $path->dirname;
   say $path->basename;
+  say $path->extname;
   say $path->sibling('.bashrc');
 
   # Use the alternative constructor
-  use Mojo::File 'path';
+  use Mojo::File qw(path);
   my $path = path('/tmp/foo/bar')->make_path;
   $path->child('test.txt')->spurt('Hello Mojo!');
 
 =head1 DESCRIPTION
 
-L<Mojo::File> is a scalar-based container for file system paths that provides a
-friendly API for dealing with different operating systems.
+L<Mojo::File> is a scalar-based container for file system paths that provides a friendly API for dealing with different
+operating systems.
 
   # Access scalar directly to manipulate path
   my $path = Mojo::File->new('/home/sri/test');
@@ -206,8 +205,13 @@ friendly API for dealing with different operating systems.
 
 =head1 FUNCTIONS
 
-L<Mojo::File> implements the following functions, which can be imported
-individually.
+L<Mojo::File> implements the following functions, which can be imported individually.
+
+=head2 curfile
+
+  my $path = curfile;
+
+Construct a new scalar-based L<Mojo::File> object for the absolute path to the current source file.
 
 =head2 path
 
@@ -216,8 +220,7 @@ individually.
   my $path = path('/home', 'sri', '.vimrc');
   my $path = path(File::Temp->newdir);
 
-Construct a new scalar-based L<Mojo::File> object, defaults to using the current
-working directory.
+Construct a new scalar-based L<Mojo::File> object, defaults to using the current working directory.
 
   # "foo/bar/baz.txt" (on UNIX)
   path('foo', 'bar', 'baz.txt');
@@ -227,8 +230,7 @@ working directory.
   my $path = tempdir;
   my $path = tempdir('tempXXXXX');
 
-Construct a new scalar-based L<Mojo::File> object for a temporary directory with
-L<File::Temp>.
+Construct a new scalar-based L<Mojo::File> object for a temporary directory with L<File::Temp>.
 
   # Longer version
   my $path = path(File::Temp->newdir('tempXXXXX'));
@@ -238,8 +240,7 @@ L<File::Temp>.
   my $path = tempfile;
   my $path = tempfile(DIR => '/tmp');
 
-Construct a new scalar-based L<Mojo::File> object for a temporary file with
-L<File::Temp>.
+Construct a new scalar-based L<Mojo::File> object for a temporary file with L<File::Temp>.
 
   # Longer version
   my $path = path(File::Temp->new(DIR => '/tmp'));
@@ -281,18 +282,25 @@ Change file permissions.
   my $destination = $path->copy_to('/home/sri');
   my $destination = $path->copy_to('/home/sri/.vimrc.backup');
 
-Copy file with L<File::Copy> and return the destination as a L<Mojo::File>
-object.
+Copy file with L<File::Copy> and return the destination as a L<Mojo::File> object.
 
 =head2 dirname
 
   my $name = $path->dirname;
 
-Return all but the last level of the path with L<File::Basename> as a
-L<Mojo::File> object.
+Return all but the last level of the path with L<File::Basename> as a L<Mojo::File> object.
 
   # "/home/sri" (on UNIX)
   path('/home/sri/.vimrc')->dirname;
+
+=head2 extname
+
+  my $ext = $path->extname;
+
+Return file extension of the path.
+
+  # "js"
+  path('/home/sri/test.js')->extname;
 
 =head2 is_abs
 
@@ -311,9 +319,8 @@ Check if the path is absolute.
   my $collection = $path->list;
   my $collection = $path->list({hidden => 1});
 
-List all files in the directory and return a L<Mojo::Collection> object
-containing the results as L<Mojo::File> objects. The list does not include C<.>
-and C<..>.
+List all files in the directory and return a L<Mojo::Collection> object containing the results as L<Mojo::File>
+objects. The list does not include C<.> and C<..>.
 
   # List files
   say for path('/home/sri/myapp')->list->each;
@@ -341,9 +348,8 @@ Include hidden files.
   my $collection = $path->list_tree;
   my $collection = $path->list_tree({hidden => 1});
 
-List all files recursively in the directory and return a L<Mojo::Collection>
-object containing the results as L<Mojo::File> objects. The list does not
-include C<.> and C<..>.
+List all files recursively in the directory and return a L<Mojo::Collection> object containing the results as
+L<Mojo::File> objects. The list does not include C<.> and C<..>.
 
   # List all templates
   say for path('/home/sri/myapp/templates')->list_tree->each;
@@ -395,16 +401,14 @@ Return a L<File::stat> object for the symlink.
   $path = $path->make_path;
   $path = $path->make_path({mode => 0711});
 
-Create the directories if they don't already exist, any additional arguments are
-passed through to L<File::Path>.
+Create the directories if they don't already exist, any additional arguments are passed through to L<File::Path>.
 
 =head2 move_to
 
   my $destination = $path->move_to('/home/sri');
   my $destination = $path->move_to('/home/sri/.vimrc.backup');
 
-Move file with L<File::Copy> and return the destination as a L<Mojo::File>
-object.
+Move file with L<File::Copy> and return the destination as a L<Mojo::File> object.
 
 =head2 new
 
@@ -414,8 +418,7 @@ object.
   my $path = Mojo::File->new(File::Temp->new);
   my $path = Mojo::File->new(File::Temp->newdir);
 
-Construct a new L<Mojo::File> object, defaults to using the current working
-directory.
+Construct a new L<Mojo::File> object, defaults to using the current working directory.
 
   # "foo/bar/baz.txt" (on UNIX)
   Mojo::File->new('foo', 'bar', 'baz.txt');
@@ -450,8 +453,8 @@ Delete file.
   $path = $path->remove_tree;
   $path = $path->remove_tree({keep_root => 1});
 
-Delete this directory and any files and subdirectories it may contain, any
-additional arguments are passed through to L<File::Path>.
+Delete this directory and any files and subdirectories it may contain, any additional arguments are passed through to
+L<File::Path>.
 
 =head2 sibling
 
@@ -500,8 +503,7 @@ Alias for L<Mojo::Base/"tap">.
 
   my $absolute = $path->to_abs;
 
-Return absolute path as a L<Mojo::File> object, the path does not need to exist
-on the file system.
+Return absolute path as a L<Mojo::File> object, the path does not need to exist on the file system.
 
 =head2 to_array
 
@@ -516,8 +518,7 @@ Split the path on directory separators.
 
   my $relative = $path->to_rel('/some/base/path');
 
-Return a relative path from the original path to the destination path as a
-L<Mojo::File> object.
+Return a relative path from the original path to the destination path as a L<Mojo::File> object.
 
   # "sri/.vimrc" (on UNIX)
   path('/home/sri/.vimrc')->to_rel('/home');
@@ -532,8 +533,7 @@ Stringify the path.
 
   $path = $path->touch;
 
-Create file if it does not exist or change the modification and access time to
-the current time.
+Create file if it does not exist or change the modification and access time to the current time.
 
   # Safely read file
   say path('.bashrc')->touch->slurp;
